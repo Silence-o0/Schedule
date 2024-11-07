@@ -1,6 +1,5 @@
 from enum import IntEnum
 import random
-import pandas as pd
 
 
 class Day(IntEnum):
@@ -82,53 +81,74 @@ class Schedule:
     def __init__(self):
         self.lessons = []
 
-    def _check_constraints(self, lesson):
+    def check_hard_constraints(self, lesson):
         for existing_lesson in self.lessons:
-            if (
-                    existing_lesson.teacher == lesson.teacher
-                    and existing_lesson.day == lesson.day
-                    and existing_lesson.lesson_num == lesson.lesson_num
-            ):
-                return False
-            if (
-                    existing_lesson.group == lesson.group
-                    and existing_lesson.day == lesson.day
-                    and existing_lesson.lesson_num == lesson.lesson_num
-                    and (existing_lesson.subgroup is None or lesson.subgroup is None or
-                         existing_lesson.subgroup[:-1] != lesson.subgroup[:-1] or
-                         existing_lesson.subgroup == lesson.subgroup)
-            ):
-                return False
-            if (
-                    existing_lesson.auditorium == lesson.auditorium
-                    and existing_lesson.day == lesson.day
-                    and existing_lesson.lesson_num == lesson.lesson_num
-            ):
-                if lesson.lesson_type == "Lec" or existing_lesson.lesson_type == "Lec":
+            if lesson != existing_lesson:
+                if (
+                        existing_lesson.teacher == lesson.teacher
+                        and existing_lesson.day == lesson.day
+                        and existing_lesson.lesson_num == lesson.lesson_num
+                ):
+                    if not (
+                            existing_lesson.lesson_type == "Lec" and lesson.lesson_type == "Lec"
+                            and existing_lesson.subject == lesson.subject and
+                            existing_lesson.auditorium == lesson.auditorium
+                    ):
+                        return False
+                if (
+                        existing_lesson.group == lesson.group
+                        and existing_lesson.day == lesson.day
+                        and existing_lesson.lesson_num == lesson.lesson_num
+                        and (existing_lesson.subgroup is None or lesson.subgroup is None or
+                             existing_lesson.subgroup[:-1] != lesson.subgroup[:-1] or
+                             existing_lesson.subgroup == lesson.subgroup)
+                ):
                     return False
+                if (
+                        existing_lesson.auditorium == lesson.auditorium
+                        and existing_lesson.day == lesson.day
+                        and existing_lesson.lesson_num == lesson.lesson_num
+                ):
+                    if not (
+                            existing_lesson.lesson_type == "Lec" and lesson.lesson_type == "Lec"
+                            and existing_lesson.subject == lesson.subject and
+                            existing_lesson.teacher == lesson.teacher
+                    ):
+                    # if lesson.lesson_type == "Lec" or existing_lesson.lesson_type == "Lec":
+                        return False
         return True
 
-    def check_change_shared_lec(self, lesson):
-        for existing_lesson in self.lessons:
+    def hard_constraints_schedule_check(self):
+        for lesson in self.lessons:
+            if not self.check_hard_constraints(lesson):
+                return False
+        return True
 
-                self.check_change_shared_lec(lesson)
-                return True
-
-    def check_shared_lec(self, group, subject):
+    def set_shared_lec(self, lesson, teacher, subject, group, auditoriums):
         for existing_lesson in self.lessons:
-            if existing_lesson.group != group and existing_lesson.subject == subject:
-                lesson = Lesson(
-                    existing_lesson.day,
-                    existing_lesson.lesson_num,
-                    existing_lesson.teacher,
-                    existing_lesson.lesson_type,
-                    subject,
-                    group,
-                    existing_lesson.auditorium,
-                )
-                self.check_change_shared_lec(lesson)
-                return True
-        return False
+            if lesson != existing_lesson:
+                if (
+                        existing_lesson.teacher == lesson.teacher
+                        and existing_lesson.day == lesson.day
+                        and existing_lesson.lesson_num == lesson.lesson_num
+                ):
+                    if (
+                            existing_lesson.lesson_type == "Lec" and lesson.lesson_type == "Lec"
+                            and existing_lesson.subject == lesson.subject
+                    ):
+                        auditorium = next((a for a in auditoriums if a.number == existing_lesson.auditorium), None)
+                        new_lesson = Lesson(
+                            lesson.day,
+                            lesson.lesson_num,
+                            teacher,
+                            lesson.lesson_type,
+                            subject,
+                            group,
+                            auditorium,
+                            lesson.subgroup,
+                        )
+                        return self.check_hard_constraints(lesson), new_lesson
+        return False, lesson
 
     def generate_schedule(self, groups, teachers, auditoriums, week_quantity):
         max_lessons_per_day = 4
@@ -158,7 +178,7 @@ class Schedule:
                         )
                         break
                     teacher = random.choice(available_teachers)
-                    for _ in range(int((lesson_quantity-1) // week_quantity) + 1):
+                    for _ in range(int((lesson_quantity - 1) // week_quantity) + 1):
                         # if lesson_type == "Lec":
                         #     if self.check_shared_lec(group, subject):
                         #         break
@@ -199,58 +219,14 @@ class Schedule:
                                     auditorium,
                                     subgroup,
                                 )
+
+                                if lesson_type == "Lec":
+                                    result_flag, new_lesson = self.set_shared_lec(lesson, teacher, subject,
+                                                                                  group, auditoriums)
+                                    if result_flag:
+                                        lesson = new_lesson
+
                                 loop_num += 1
-                                if self._check_constraints(lesson):
+                                if self.check_hard_constraints(lesson):
                                     self.lessons.append(lesson)
                                     assigned = True
-
-
-    def export_schedule_to_excel(self, filename="schedule.xlsx"):
-        lesson_dicts = [
-            {
-                **lesson.to_dict(),
-                "day_num": lesson.day.value,
-            }
-            for lesson in self.lessons
-        ]
-        df = pd.DataFrame(lesson_dicts)
-
-        column_for_group_order = [
-            "Group",
-            "Day",
-            "Lesson_num",
-            "Subject",
-            "Lesson_type",
-            "Teacher",
-            "Subgroup",
-            "Auditorium",
-        ]
-        column_for_teacher_order = [
-            "Teacher",
-            "Day",
-            "Lesson_num",
-            "Subject",
-            "Lesson_type",
-            "Group",
-            "Subgroup",
-            "Auditorium",
-        ]
-
-        sorted_by_group = (
-            df[column_for_group_order + ["day_num"]]
-            .sort_values(by=["Group", "day_num", "Lesson_num"])
-            .drop(columns=["day_num"])
-        )
-
-        sorted_by_teacher = (
-            df[column_for_teacher_order + ["day_num"]]
-            .sort_values(by=["Teacher", "day_num", "Lesson_num"])
-            .drop(columns=["day_num"])
-        )
-
-        with pd.ExcelWriter(filename) as writer:
-            sorted_by_group.to_excel(writer, sheet_name="Sorted_By_Groups", index=False)
-            sorted_by_teacher.to_excel(
-                writer, sheet_name="Sorted_By_Teachers", index=False
-            )
-        print(f"Saved in '{filename}'")

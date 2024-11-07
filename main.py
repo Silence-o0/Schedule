@@ -1,186 +1,7 @@
-import random
-
-import openpyxl
-
-from classes import *
+from data_workers import *
 
 
-def parse_groups_subjects(pi_text):
-    subjects = []
-    subject_parts = pi_text.split("-")
-
-    for part in subject_parts:
-        if "(" in part and ")" in part:
-            subject_name = part.split("(")[0].strip()
-            details_text = part.split("(")[1].rstrip().rstrip(")")
-            details = []
-            for detail in details_text.split(","):
-                parts = detail.split("|")
-                type_ = parts[0].strip()
-                hours = float(parts[1])
-                subgroups = int(parts[2]) if len(parts) > 2 else None
-                details.append(SubjectDetail(type_, hours, subgroups))
-            subjects.append(Subject(subject_name, details))
-    return subjects
-
-
-def parse_teachers_subjects(text):
-    subjects = []
-    subject_parts = text.split(",")
-
-    for parts in subject_parts:
-        parts = parts.strip()
-        name, types = parts.split("(", 1)
-        name = name.strip()
-        types = types.strip(")")
-
-        details = []
-        type_entries = types.split("|")
-        for type_entry in type_entries:
-            type_entry = type_entry.strip()
-            details.append(SubjectDetail(subj_type=type_entry))
-        subject = Subject(name=name, details=details)
-        subjects.append(subject)
-    return subjects
-
-
-def load_data_from_excel(file_path):
-    workbook = openpyxl.load_workbook(file_path)
-    sheet1 = workbook["Groups"]
-    groups = []
-    for row in sheet1.iter_rows(min_row=2, values_only=True):
-        if row[0] is None:
-            break
-        group_name = row[0]
-        students_count = row[1]
-        pi_text = row[2]
-        subjects = parse_groups_subjects(pi_text)
-        groups.append(Group(group_name, students_count, subjects))
-
-    sheet2 = workbook["Teachers"]
-    teachers = []
-    for row in sheet2.iter_rows(min_row=2, values_only=True):
-        if row[0] is None:
-            break
-        teacher_name = row[0]
-        subjects_list = row[1]
-        hours = row[2]
-
-        subjects = parse_teachers_subjects(subjects_list)
-        teachers.append(Teacher(teacher_name, subjects, hours))
-
-    sheet3 = workbook["Auditoriums"]
-    auditoriums = []
-    for row in sheet3.iter_rows(min_row=2, values_only=True):
-        if row[0] is None:
-            break
-        num = row[0]
-        capacity = row[1]
-        auditoriums.append(Auditorium(num, capacity))
-    return groups, teachers, auditoriums
-
-
-def test_generate(group_q, teacher_q, aud_q, subj_q):
-    subjects = []
-    teachers = []
-    groups = []
-    auditoriums = []
-
-    import random
-
-    for i in range(subj_q):
-        name = f"Subject{i + 1}"
-        details = [
-            SubjectDetail(subj_type="Lec", hours=round(random.uniform(10, 42) * 2) / 2)
-        ]
-
-        if random.random() < 0.75:
-            details.append(
-                SubjectDetail(
-                    subj_type="Lab",
-                    hours=round(random.uniform(10, 42) * 2) / 2,
-                    subgroups=random.randint(1, 3),
-                )
-            )
-
-        subjects.append(Subject(name=name, details=details))
-
-    for i in range(teacher_q):
-        name = f"Teacher{i + 1}"
-        teacher_subjects = []
-
-        assigned_subjects = random.sample(subjects, random.randint(4, 12))
-
-        for subject in assigned_subjects:
-            subject_details = []
-
-            for detail in subject.details:
-                if detail.type == "Lab":
-                    subject_details.append(detail)
-
-            if any(d.type == "Lec" for d in subject.details) and random.random() < 0.7:
-                subject_details.extend([d for d in subject.details if d.type == "Lec"])
-
-            if subject_details:
-                teacher_subjects.append(
-                    Subject(name=subject.name, details=subject_details)
-                )
-
-        hours = random.randint(10, 30)
-        teachers.append(Teacher(name=name, subjects=teacher_subjects, hours=hours))
-
-    for i in range(group_q):
-        name = f"Group{i + 1}"
-        students_count = random.randint(20, 40)
-
-        assigned_subjects = random.sample(subjects, random.randint(6, 8))
-
-        group_subjects = []
-        for subject in assigned_subjects:
-            subject_details = []
-
-            subject_details.extend([d for d in subject.details if d.type == "Lec"])
-
-            if any(d.type == "Lab" for d in subject.details) and random.random() < 0.75:
-                subject_details.extend([d for d in subject.details if d.type == "Lab"])
-
-            group_subjects.append(Subject(name=subject.name, details=subject_details))
-
-        groups.append(
-            Group(name=name, students_count=students_count, subjects=group_subjects)
-        )
-
-    for i in range(aud_q):
-        number = f"A{i + 1}"
-        capacity = random.randint(20, 120)
-        auditoriums.append(Auditorium(number=number, capacity=capacity))
-    return subjects, teachers, groups, auditoriums
-
-
-def output_of_input(groups, teachers, auditoriums):
-    for group in groups:
-        print(f"Group: {group.name}, Student quantity: {group.students_count}")
-        for subject in group.subjects:
-            print(f"  Subject: {subject.name}")
-            for detail in subject.details:
-                print(
-                    f"    Type: {detail.type}, Hours: {detail.hours}, Subgroups: {detail.subgroups}"
-                )
-
-    print("\nTeachers:")
-    for teacher in teachers:
-        print(f"Teacher: {teacher.name}, Hours: {teacher.hours}")
-        for subject in teacher.subjects:
-            print(f"  Subject: {subject.name}")
-            for detail in subject.details:
-                print(f"    Type: {detail.type}")
-
-    print("\nAuditoriums:")
-    for auditorium in auditoriums:
-        print(f"auditorium №{auditorium.number}, Capacity: {auditorium.capacity}")
-
-
-def fitness(schedule, groups, teachers, auditoriums, week_quantity):
+def fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, output=False):
     score = 0
 
     window_group_penalty = 0
@@ -194,9 +15,7 @@ def fitness(schedule, groups, teachers, auditoriums, week_quantity):
             for i in range(len(day_lessons) - 1):
                 if (day_lessons[i + 1].lesson_num - day_lessons[i].lesson_num) > 1:
                     window_group_penalty += 1
-
     score -= window_group_penalty
-    print(score)
 
     window_teacher_penalty = 0
     for teacher in teachers:
@@ -209,9 +28,7 @@ def fitness(schedule, groups, teachers, auditoriums, week_quantity):
             for i in range(len(day_lessons) - 1):
                 if (day_lessons[i + 1].lesson_num - day_lessons[i].lesson_num) > 1:
                     window_teacher_penalty += 1
-
     score -= window_teacher_penalty
-    print(score)
 
     capacity_penalty = 0
     for lesson in schedule.lessons:
@@ -219,20 +36,21 @@ def fitness(schedule, groups, teachers, auditoriums, week_quantity):
         auditorium = next(a for a in auditoriums if a.number == lesson.auditorium)
         if group.students_count > auditorium.capacity:
             capacity_penalty += 1
-
     score -= capacity_penalty
-    print(score)
 
     weekly_hours_penalty = 0
     for teacher in teachers:
-        total_hours = sum(
-            1.5 for lesson in schedule.lessons if lesson.teacher == teacher.name
+        teacher_lessons = sorted(
+            [lesson for lesson in schedule.lessons if lesson.teacher == teacher.name],
+            key=lambda x: (x.day, x.lesson_num)
         )
+        unique_slots = set()
+        for lesson in teacher_lessons:
+            unique_slots.add((lesson.day, lesson.lesson_num))
+        total_hours = len(unique_slots) * 1.5
         if total_hours > teacher.hours:
             weekly_hours_penalty += total_hours - teacher.hours
-
     score -= weekly_hours_penalty
-    print(score)
 
     overlearning_time_penalty = 0
     for group in groups:
@@ -259,15 +77,21 @@ def fitness(schedule, groups, teachers, auditoriums, week_quantity):
             subject_time = abs(
                 (subject_dict[subject_item] * 1.5 * week_quantity) / subgroups_count - result_detail.hours)
             overlearning_time_penalty += subject_time
+    overlearning_time_penalty /= week_quantity
+    score -= overlearning_time_penalty
 
-    score -= (overlearning_time_penalty / week_quantity)
-    print("Overlearning time:", (overlearning_time_penalty / week_quantity))
-    print("Final score: ", score)
-
+    if output:
+        print("Groups windows:", -window_group_penalty)
+        print("Teachers windows:", -window_teacher_penalty)
+        print("Auditoriums capacity:", -capacity_penalty)
+        print("Teachers hours constraints:", -weekly_hours_penalty)
+        print("Groups hours overlearning/underlearning:", -overlearning_time_penalty)
+        print("Final score: ", score)
+        print()
     return score
 
 
-def crossover(schedule1, schedule2, groups, teachers, week_quantity, max_lessons_per_day=4):
+def crossover(schedule1, schedule2, groups, teachers, week_quantity, auditoriums, max_lessons_per_day=4):
     new_schedule = Schedule()
 
     for group in groups:
@@ -290,7 +114,7 @@ def crossover(schedule1, schedule2, groups, teachers, week_quantity, max_lessons
                         assigned_teachers[(subject, lesson_type)] = lesson.teacher
 
                     if lesson.teacher == assigned_teachers[(subject, lesson_type)]:
-                        if new_schedule._check_constraints(lesson):
+                        if new_schedule.check_hard_constraints(lesson):
                             new_schedule.lessons.append(lesson)
                         else:
                             alt_schedule = schedule2 if parent_schedule == schedule1 else schedule1
@@ -301,15 +125,15 @@ def crossover(schedule1, schedule2, groups, teachers, week_quantity, max_lessons
                             )
                             if (alt_lesson and
                                     alt_lesson.teacher == assigned_teachers[(subject, lesson_type)] and
-                                    new_schedule._check_constraints(alt_lesson)):
+                                    new_schedule.check_hard_constraints(alt_lesson)):
                                 new_schedule.lessons.append(alt_lesson)
 
-    mutated_schedule = mutation_fixed_group_subjects(new_schedule, groups, teachers, week_quantity)
+    mutated_schedule = mutation_fixed_group_subjects(new_schedule, groups, teachers, auditoriums, week_quantity)
     smoothed_schedule = smoothing(mutated_schedule, teachers)
-    return mutation_fixed_group_subjects(smoothed_schedule, groups, teachers, week_quantity)
+    return mutation_fixed_group_subjects(smoothed_schedule, groups, teachers, auditoriums, week_quantity)
 
 
-def mutation_fixed_group_subjects(schedule, groups, teachers, week_quantity):
+def mutation_fixed_group_subjects(schedule, groups, teachers, auditoriums, week_quantity):
     for group in groups:
         for subject in group.subjects:
             for detail in subject.details:
@@ -427,7 +251,15 @@ def mutation_fixed_group_subjects(schedule, groups, teachers, week_quantity):
                                                 auditorium,
                                                 subgroup_name,
                                             )
-                                            if schedule._check_constraints(lesson):
+
+                                            if detail.type == "Lec":
+                                                result_flag, new_lesson = schedule.set_shared_lec(lesson, teacher,
+                                                                                                  subject, group,
+                                                                                                  auditoriums)
+                                                if result_flag:
+                                                    lesson = new_lesson
+
+                                            if schedule.check_hard_constraints(lesson):
                                                 schedule.lessons.append(lesson)
                                                 assigned = True
                                                 break
@@ -464,8 +296,15 @@ def mutation_fixed_group_subjects(schedule, groups, teachers, week_quantity):
                                     auditorium,
                                     subgroup_name,
                                 )
+
+                                if detail.type == "Lec":
+                                    result_flag, new_lesson = schedule.set_shared_lec(lesson, teacher, subject,
+                                                                                      group, auditoriums)
+                                    if result_flag:
+                                        lesson = new_lesson
+
                                 loop_num += 1
-                                if schedule._check_constraints(lesson):
+                                if schedule.check_hard_constraints(lesson):
                                     schedule.lessons.append(lesson)
                                     assigned = True
     return schedule
@@ -473,9 +312,16 @@ def mutation_fixed_group_subjects(schedule, groups, teachers, week_quantity):
 
 def smoothing(new_schedule, teachers):
     for teacher in teachers:
-        teacher_hours = sum(
-            1.5 for lesson in new_schedule.lessons if lesson.teacher == teacher.name
+        teacher_lessons = sorted(
+            [lesson for lesson in new_schedule.lessons if lesson.teacher == teacher.name],
+            key=lambda x: (x.day, x.lesson_num)
         )
+
+        unique_slots = set()
+        for lesson in teacher_lessons:
+            unique_slots.add((lesson.day, lesson.lesson_num))
+
+        teacher_hours = len(unique_slots) * 1.5
 
         if teacher_hours > teacher.hours:
             excess_hours = teacher_hours - teacher.hours
@@ -520,24 +366,20 @@ if __name__ == "__main__":
 
     schedules_collection = []
 
-
-    # child_schedule = crossover(schedules_collection[0], schedules_collection[1], groups, teachers, week_quantity)
-    # print(fitness(child_schedule, groups, teachers, auditoriums, week_quantity))
-    # child_schedule.export_schedule_to_excel("schedule.xlsx")
-
     specimen_num = 100
-    iter_num = 50
+    iter_num = 500
 
     for i in range(specimen_num):
         schedule = Schedule()
         schedule.generate_schedule(
             groups=groups, teachers=teachers, auditoriums=auditoriums, week_quantity=week_quantity
         )
-        fitness_score = fitness(schedule, groups, teachers, auditoriums, week_quantity)
+        fitness_score = fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, False)
         # print(fitness_score)
         # schedule.export_schedule_to_excel(f"schedule{i}.xlsx")
         schedules_collection.append((schedule, fitness_score))
 
+    num_iter_no_change = (None, 0)
     for i in range(iter_num):
         sorted_items = sorted(
             schedules_collection,
@@ -547,6 +389,32 @@ if __name__ == "__main__":
         half_size = len(sorted_items) // 2
         sorted_items = sorted_items[:half_size]
         schedules_collection = sorted_items
+
+        half_num = specimen_num // 8
+        if sorted_items[half_num][1] == sorted_items[-half_num][1] and (num_iter_no_change[0] == sorted_items[-half_num][1]
+                                                           or num_iter_no_change[0] is None):
+            num_iter_no_change = (sorted_items[-half_num][1], num_iter_no_change[1] + 1)
+            print("OK")
+        else:
+            num_iter_no_change = (sorted_items[-half_num][1], 0)
+
+        if num_iter_no_change[1] == 5:
+            num_iter_no_change = (None, 0)
+            half = len(sorted_items) // 2
+            sorted_items = sorted_items[:half]
+            schedules_collection = schedules_collection[:half]
+            for i in range(half_size//2):
+                schedule = Schedule()
+                schedule.generate_schedule(
+                    groups=groups, teachers=teachers, auditoriums=auditoriums, week_quantity=week_quantity
+                )
+                fitness_score = fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, False)
+                # print(fitness_score)
+                # schedule.export_schedule_to_excel(f"schedule{i}.xlsx")
+                schedules_collection.append((schedule, fitness_score))
+                sorted_items.append((schedule, fitness_score))
+
+
 
         print()
         print(f"Best iter {i}: ")
@@ -560,8 +428,8 @@ if __name__ == "__main__":
                 random_parent2 = random.randint(0, half_size - 1)
 
             child_schedule = crossover(sorted_items[random_parent1][0],
-                                       sorted_items[random_parent2][0], groups, teachers, week_quantity)
-            fitness_score = fitness(child_schedule, groups, teachers, auditoriums, week_quantity)
+                                       sorted_items[random_parent2][0], groups, teachers, week_quantity, auditoriums)
+            fitness_score = fitness_soft(child_schedule, groups, teachers, auditoriums, week_quantity, False)
             schedules_collection.append((child_schedule, fitness_score))
 
     schedules_collection = sorted(
@@ -577,6 +445,6 @@ if __name__ == "__main__":
 
     print()
     print("BEST:")
-    fitness(schedules_collection[0][0], groups, teachers, auditoriums, week_quantity)
-    schedules_collection[0][0].export_schedule_to_excel(f"schedule.xlsx")
-
+    print("Hard constraints:", schedules_collection[0][0].hard_constraints_schedule_check())
+    fitness_soft(schedules_collection[0][0], groups, teachers, auditoriums, week_quantity, True)
+    export_schedule_to_excel(schedules_collection[0][0], "schedule.xlsx")
