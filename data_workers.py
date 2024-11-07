@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import openpyxl
 import pandas as pd
 
@@ -79,7 +81,7 @@ def load_data_from_excel(file_path):
     return groups, teachers, auditoriums
 
 
-def export_schedule_to_excel(schedule_to_save, filename="schedule.xlsx"):
+def export_schedule_to_excel(schedule_to_save, groups, auditoriums, filename="schedule.xlsx"):
     lesson_dicts = [
         {
             **lesson.to_dict(),
@@ -122,11 +124,45 @@ def export_schedule_to_excel(schedule_to_save, filename="schedule.xlsx"):
         .drop(columns=["day_num"])
     )
 
+    auditorium_data = defaultdict(lambda: defaultdict(list))
+
+    for lesson in schedule_to_save.lessons:
+        auditorium_data[lesson.auditorium][(lesson.day, lesson.lesson_num)].append(lesson)
+
+    group_student_count = {}
+    for group in groups:
+        group_student_count[group.name] = group.students_count
+
+    auditorium_records = []
+    for auditorium_num, lessons_by_day in auditorium_data.items():
+        for (day, lesson_num), lessons in lessons_by_day.items():
+            groups = [lesson.group for lesson in lessons]
+            total_students = sum(group_student_count[group] for group in groups)
+            auditorium_capacity = next(a.capacity for a in auditoriums if a.number == auditorium_num)
+
+            auditorium_records.append({
+                "Auditorium": auditorium_num,
+                "Day": Day(day).name,
+                "Lesson_num": lesson_num,
+                "Subject": lessons[0].subject,
+                "Groups": ", ".join(set(groups)),
+                "Subgroup": ", ".join(str(lesson.subgroup) for lesson in lessons if lesson.subgroup),
+                "Total_students": total_students,
+                "Capacity": auditorium_capacity,
+            })
+
+    sorted_by_auditorium = pd.DataFrame(auditorium_records)
+
+    sorted_by_auditorium = sorted_by_auditorium.sort_values(
+        by=["Auditorium", "Day", "Lesson_num"],
+        ascending=[True, True, True]
+    )
+
     with pd.ExcelWriter(filename) as writer:
         sorted_by_group.to_excel(writer, sheet_name="Sorted_By_Groups", index=False)
-        sorted_by_teacher.to_excel(
-            writer, sheet_name="Sorted_By_Teachers", index=False
-        )
+        sorted_by_teacher.to_excel(writer, sheet_name="Sorted_By_Teachers", index=False)
+        sorted_by_auditorium.to_excel(writer, sheet_name="Sorted_By_Auditorium", index=False)
+
     print(f"Saved in '{filename}'")
 
 
@@ -136,19 +172,19 @@ def test_generate(group_q, teacher_q, aud_q, subj_q):
     groups = []
     auditoriums = []
 
-    import random
-
     for i in range(subj_q):
         name = f"Subject{i + 1}"
+        possible_hours = [21, 42, 63]
+
         details = [
-            SubjectDetail(subj_type="Lec", hours=round(random.uniform(10, 42) * 2) / 2)
+            SubjectDetail(subj_type="Lec", hours=random.choice(possible_hours)),
         ]
 
         if random.random() < 0.75:
             details.append(
                 SubjectDetail(
                     subj_type="Lab",
-                    hours=round(random.uniform(10, 42) * 2) / 2,
+                    hours=random.choice(possible_hours),
                     subgroups=random.randint(1, 3),
                 )
             )
@@ -159,7 +195,7 @@ def test_generate(group_q, teacher_q, aud_q, subj_q):
         name = f"Teacher{i + 1}"
         teacher_subjects = []
 
-        assigned_subjects = random.sample(subjects, random.randint(4, 12))
+        assigned_subjects = random.sample(subjects, random.randint(2, min(12, len(subjects))))
 
         for subject in assigned_subjects:
             subject_details = []
@@ -176,7 +212,7 @@ def test_generate(group_q, teacher_q, aud_q, subj_q):
                     Subject(name=subject.name, details=subject_details)
                 )
 
-        hours = random.randint(10, 30)
+        hours = random.randint(20, 35)
         teachers.append(Teacher(name=name, subjects=teacher_subjects, hours=hours))
 
     for i in range(group_q):

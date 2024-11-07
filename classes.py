@@ -100,7 +100,7 @@ class Schedule:
                         and existing_lesson.day == lesson.day
                         and existing_lesson.lesson_num == lesson.lesson_num
                         and (existing_lesson.subgroup is None or lesson.subgroup is None or
-                             existing_lesson.subgroup[:-1] != lesson.subgroup[:-1] or
+                             existing_lesson.subgroup[-1] != lesson.subgroup[-1] or
                              existing_lesson.subgroup == lesson.subgroup)
                 ):
                     return False
@@ -114,7 +114,6 @@ class Schedule:
                             and existing_lesson.subject == lesson.subject and
                             existing_lesson.teacher == lesson.teacher
                     ):
-                    # if lesson.lesson_type == "Lec" or existing_lesson.lesson_type == "Lec":
                         return False
         return True
 
@@ -173,15 +172,10 @@ class Schedule:
                         )
                     ]
                     if not available_teachers:
-                        print(
-                            f"No available teachers for {subject.name}, {lesson_type}, {group.name}"
-                        )
-                        break
+                        raise Exception(f"No available teachers for {subject.name}, {lesson_type}, {group.name}")
+
                     teacher = random.choice(available_teachers)
                     for _ in range(int((lesson_quantity - 1) // week_quantity) + 1):
-                        # if lesson_type == "Lec":
-                        #     if self.check_shared_lec(group, subject):
-                        #         break
                         for subgroup in range(1, subgroup_count + 1):
                             subgroup = f"{subgroup}/{subgroup_count}"
                             assigned = False

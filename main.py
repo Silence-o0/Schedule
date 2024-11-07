@@ -1,4 +1,5 @@
 from data_workers import *
+import copy
 
 
 def fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, output=False):
@@ -31,11 +32,17 @@ def fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, output=
     score -= window_teacher_penalty
 
     capacity_penalty = 0
+    lessons_by_auditorium_time = defaultdict(lambda: defaultdict(list))
     for lesson in schedule.lessons:
-        group = next(g for g in groups if g.name == lesson.group)
-        auditorium = next(a for a in auditoriums if a.number == lesson.auditorium)
-        if group.students_count > auditorium.capacity:
-            capacity_penalty += 1
+        lessons_by_auditorium_time[lesson.auditorium][(lesson.day, lesson.lesson_num)].append(lesson)
+
+    for auditorium_num, lessons_by_day in lessons_by_auditorium_time.items():
+        for (day, lesson_num), lessons in lessons_by_day.items():
+            total_students = sum(next(g.students_count for g in groups if g.name == lesson.group) for lesson in lessons)
+            auditorium = next(a for a in auditoriums if a.number == auditorium_num)
+
+            if total_students > auditorium.capacity:
+                capacity_penalty = total_students - auditorium.capacity
     score -= capacity_penalty
 
     weekly_hours_penalty = 0
@@ -130,7 +137,9 @@ def crossover(schedule1, schedule2, groups, teachers, week_quantity, auditoriums
 
     mutated_schedule = mutation_fixed_group_subjects(new_schedule, groups, teachers, auditoriums, week_quantity)
     smoothed_schedule = smoothing(mutated_schedule, teachers)
-    return mutation_fixed_group_subjects(smoothed_schedule, groups, teachers, auditoriums, week_quantity)
+    mutated_schedule = mutation_fixed_group_subjects(smoothed_schedule, groups, teachers, auditoriums, week_quantity)
+    mutated_schedule = mutate_auditoriums_by_size(mutated_schedule, auditoriums, groups)
+    return mutated_schedule
 
 
 def mutation_fixed_group_subjects(schedule, groups, teachers, auditoriums, week_quantity):
@@ -192,7 +201,8 @@ def mutation_fixed_group_subjects(schedule, groups, teachers, auditoriums, week_
                                 )
                             ]
                         else:
-                            available_teachers.append(existing_lesson[0].teacher)
+                            teacher = [t for t in teachers if t.name == existing_lesson[0].teacher]
+                            available_teachers.append(teacher[0])
 
                         for _ in range(int(lack_hours / 1.5)):
                             days_list = list(Day)
@@ -351,33 +361,71 @@ def smoothing(new_schedule, teachers):
     return new_schedule
 
 
+def mutate_auditoriums_by_size(schedule, auditoriums, groups):
+    new_schedule = copy.deepcopy(schedule)
+    lessons = new_schedule.lessons
+
+    for _ in range(5):
+        for _ in range(20):
+            lesson1, lesson2 = random.sample(lessons, 2)
+
+            if (
+                    lesson1.day == lesson2.day and
+                    lesson1.lesson_num == lesson2.lesson_num and
+                    lesson1.auditorium != lesson2.auditorium
+            ):
+                break
+        else:
+            return new_schedule
+
+        total_students_lesson1 = sum(
+            group.students_count for group in groups if group.name == lesson1.group
+        )
+        total_students_lesson2 = sum(
+            group.students_count for group in groups if group.name == lesson2.group
+        )
+
+        auditorium1 = next((a for a in auditoriums if a.number == lesson1.auditorium), None)
+        auditorium2 = next((a for a in auditoriums if a.number == lesson2.auditorium), None)
+
+        if auditorium1 and auditorium2:
+            if (
+                    (total_students_lesson1 > total_students_lesson2 and auditorium1.capacity < auditorium2.capacity) or
+                    (total_students_lesson1 < total_students_lesson2 and auditorium1.capacity > auditorium2.capacity)
+            ):
+                lesson1.auditorium, lesson2.auditorium = lesson2.auditorium, lesson1.auditorium
+    return new_schedule
+
+
 if __name__ == "__main__":
     file_path = "schedule_data.xlsx"
     init_groups, init_teachers, init_auditoriums = load_data_from_excel(file_path)
     gen_subjects, gen_teachers, gen_groups, gen_auditoriums = test_generate(
-        # 28, 16, 8, 18
-        0, 0, 0, 0
+         12, 15, 18, 8
+        # 0, 0, 0, 0
     )
     week_quantity = 14
 
-    groups = init_groups + gen_groups
-    teachers = init_teachers + gen_teachers
-    auditoriums = init_auditoriums + gen_auditoriums
+    groups = gen_groups + init_groups
+    teachers = gen_teachers + init_teachers
+    auditoriums = gen_auditoriums + init_auditoriums
 
     schedules_collection = []
 
-    specimen_num = 100
-    iter_num = 500
+    specimen_num = 20
+    iter_num = 10
 
-    for i in range(specimen_num):
-        schedule = Schedule()
-        schedule.generate_schedule(
-            groups=groups, teachers=teachers, auditoriums=auditoriums, week_quantity=week_quantity
-        )
-        fitness_score = fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, False)
-        # print(fitness_score)
-        # schedule.export_schedule_to_excel(f"schedule{i}.xlsx")
-        schedules_collection.append((schedule, fitness_score))
+    try:
+        for i in range(specimen_num):
+            schedule = Schedule()
+            schedule.generate_schedule(
+                groups=groups, teachers=teachers, auditoriums=auditoriums, week_quantity=week_quantity
+            )
+            fitness_score = fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, False)
+            schedules_collection.append((schedule, fitness_score))
+    except Exception as e:
+        print(f"{e}")
+        exit(0)
 
     num_iter_no_change = (None, 0)
     for i in range(iter_num):
@@ -390,11 +438,11 @@ if __name__ == "__main__":
         sorted_items = sorted_items[:half_size]
         schedules_collection = sorted_items
 
-        half_num = specimen_num // 8
+        half_num = half_size // 4
         if sorted_items[half_num][1] == sorted_items[-half_num][1] and (num_iter_no_change[0] == sorted_items[-half_num][1]
                                                            or num_iter_no_change[0] is None):
             num_iter_no_change = (sorted_items[-half_num][1], num_iter_no_change[1] + 1)
-            print("OK")
+            print("The results change weakly")
         else:
             num_iter_no_change = (sorted_items[-half_num][1], 0)
 
@@ -409,15 +457,11 @@ if __name__ == "__main__":
                     groups=groups, teachers=teachers, auditoriums=auditoriums, week_quantity=week_quantity
                 )
                 fitness_score = fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, False)
-                # print(fitness_score)
-                # schedule.export_schedule_to_excel(f"schedule{i}.xlsx")
                 schedules_collection.append((schedule, fitness_score))
                 sorted_items.append((schedule, fitness_score))
 
-
-
         print()
-        print(f"Best iter {i}: ")
+        print(f"Best of iter {i}: ")
         for fi in range(0, len(sorted_items)):
             print(sorted_items[fi][1])
 
@@ -438,13 +482,8 @@ if __name__ == "__main__":
         reverse=True
     )
 
-    # print()
-    # print("BEST LAST ITER:")
-    # for fi in range(0, len(schedules_collection)):
-    #     print(schedules_collection[fi][1])
-
     print()
     print("BEST:")
     print("Hard constraints:", schedules_collection[0][0].hard_constraints_schedule_check())
     fitness_soft(schedules_collection[0][0], groups, teachers, auditoriums, week_quantity, True)
-    export_schedule_to_excel(schedules_collection[0][0], "schedule.xlsx")
+    export_schedule_to_excel(schedules_collection[0][0], groups, auditoriums, "schedule.xlsx")
