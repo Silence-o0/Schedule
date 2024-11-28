@@ -1,3 +1,6 @@
+from math import floor, ceil
+from random import choice, randint
+
 from data_workers import *
 import copy
 
@@ -397,11 +400,135 @@ def mutate_auditoriums_by_size(schedule, auditoriums, groups):
     return new_schedule
 
 
+def calculate_similarity(schedule1, schedule2):
+    lessons1 = set(
+        (l.day, l.lesson_num, l.teacher, l.group, l.lesson_type, l.subject, l.auditorium)
+        for l in schedule1.lessons
+    )
+    lessons2 = set(
+        (l.day, l.lesson_num, l.teacher, l.group, l.lesson_type, l.subject, l.auditorium)
+        for l in schedule2.lessons
+    )
+
+    intersection = len(lessons1 & lessons2)
+    union = len(lessons1 | lessons2) // 2
+    return intersection / union if union > 0 else 0.0
+
+
+def group_schedules(schedule_pool, similarity_threshold=1.0):
+    num_schedules = len(schedule_pool)
+    visited = set()
+    clusters = []
+
+    for i in range(num_schedules):
+        if i not in visited:
+            cluster = [i]
+            visited.add(i)
+            for j in range(num_schedules):
+                if j != i and j not in visited:
+                    similarity = calculate_similarity(schedule_pool[i][0], schedule_pool[j][0])
+                    if similarity >= similarity_threshold:
+                        cluster.append(j)
+                        visited.add(j)
+            clusters.append(cluster)
+    return clusters
+
+
+def predator_approach(schedules_tuple, clusters, retain_count=8):
+    new_schedules_tuples = []
+
+    for cluster in clusters:
+        if len(cluster) > retain_count:
+            sorted_cluster = sorted(
+                cluster, key=lambda idx: schedules_tuple[idx][1], reverse=True
+            )
+            best_indices = sorted_cluster[:retain_count]
+        else:
+            best_indices = cluster
+
+        for idx in best_indices:
+            new_schedules_tuples.append(schedules_tuple[idx])
+
+    return new_schedules_tuples
+
+
+def rain_effect(schedules_collection, max_num, teachers, auditoriums, groups, change_num=10, max_attempts=50):
+    clusters = group_schedules(schedules_collection, similarity_threshold=0.8)
+
+    sorted_clusters = sorted(clusters, key=lambda x: len(x))
+    num_clusters_to_rain = len(sorted_clusters) // 2
+    target_clusters = sorted_clusters[:num_clusters_to_rain]
+
+    new_schedules = copy.deepcopy(schedules_collection)
+
+    for cluster in target_clusters:
+        base_schedules_idx = random.choices(cluster, k=ceil(len(cluster) / 2))
+        for base_schedule_idx in base_schedules_idx:
+            while len(new_schedules) <= max_num:
+                new_schedule = copy.deepcopy(schedules_collection[base_schedule_idx][0])
+                changes_made = 0
+                attempts = 0
+
+                while attempts < max_attempts:
+                    action = random.choice([0, 1])
+
+                    if action == 0:
+                        if change_teacher(new_schedule, teachers):
+                            changes_made += 1
+                    else:
+                        if change_auditorium(new_schedule, auditoriums, groups):
+                            changes_made += 1
+
+                    attempts += 1
+                if changes_made >= change_num:
+                    new_schedules.append(new_schedule)
+
+    return new_schedules
+
+
+def change_teacher(schedule, teachers):
+    lesson = random.choice(schedule.lessons)
+    copy_lesson = copy.deepcopy(lesson)
+    eligible_teachers = [
+        teacher for teacher in teachers
+        if lesson.subject in teacher.subjects and teacher.name != lesson.teacher
+    ]
+
+    if eligible_teachers:
+        schedule.lessons.remove(lesson)
+        new_teacher = random.choice(eligible_teachers)
+        copy_lesson.teacher = new_teacher.name
+        if schedule.check_hard_constraints(copy_lesson):
+            schedule.lessons.append(copy_lesson)
+            return True
+        schedule.lessons.append(lesson)
+    return False
+
+
+def change_auditorium(schedule, auditoriums, groups):
+    lesson = random.choice(schedule.lessons)
+    copy_lesson = copy.deepcopy(lesson)
+    eligible_auditoriums = [
+        auditorium for auditorium in auditoriums
+        if auditorium.capacity >= sum(group.students_count for group in groups if group.name == lesson.group)
+    ]
+
+    if eligible_auditoriums:
+        schedule.lessons.remove(lesson)
+        new_auditorium = random.choice(eligible_auditoriums)
+        copy_lesson.auditorium = new_auditorium.number
+        if schedule.check_hard_constraints(copy_lesson):
+            schedule.lessons.append(copy_lesson)
+            return True
+        schedule.lessons.append(lesson)
+    return False
+
+
 if __name__ == "__main__":
     file_path = "schedule_data.xlsx"
     init_groups, init_teachers, init_auditoriums = load_data_from_excel(file_path)
     gen_subjects, gen_teachers, gen_groups, gen_auditoriums = test_generate(
-         12, 15, 18, 8
+        5, 5, 10, 8
         # 0, 0, 0, 0
     )
     week_quantity = 14
@@ -412,8 +539,8 @@ if __name__ == "__main__":
 
     schedules_collection = []
 
-    specimen_num = 20
-    iter_num = 10
+    specimen_num = 100
+    iter_num = 400
 
     try:
         for i in range(specimen_num):
@@ -429,43 +556,47 @@ if __name__ == "__main__":
 
     num_iter_no_change = (None, 0)
     for i in range(iter_num):
+
+        clusters = group_schedules(schedules_collection, similarity_threshold=0.8)
+        # for idx, cluster in enumerate(clusters):
+        #     if len(cluster) > 1:
+        #         print(f"Cluster {idx}: {cluster}")
+
+        clean_schedule_collection = predator_approach(schedules_collection, clusters,
+                                                      retain_count=max(floor(0.1 * specimen_num), 4))
+
         sorted_items = sorted(
-            schedules_collection,
+            clean_schedule_collection,
             key=lambda x: x[1],
             reverse=True
         )
-        half_size = len(sorted_items) // 2
-        sorted_items = sorted_items[:half_size]
+
+        half_size = specimen_num // 2
+        if half_size < len(sorted_items):
+            sorted_items = sorted_items[:half_size]
         schedules_collection = sorted_items
 
-        half_num = half_size // 4
-        if sorted_items[half_num][1] == sorted_items[-half_num][1] and (num_iter_no_change[0] == sorted_items[-half_num][1]
-                                                           or num_iter_no_change[0] is None):
+
+        half_num = len(sorted_items) // 4
+        if (sorted_items[-half_num][1] - sorted_items[half_num][1]) < 2 and (
+                num_iter_no_change[0] == sorted_items[-half_num][1]
+                or num_iter_no_change[0] is None):
             num_iter_no_change = (sorted_items[-half_num][1], num_iter_no_change[1] + 1)
             print("The results change weakly")
         else:
             num_iter_no_change = (sorted_items[-half_num][1], 0)
 
+
         if num_iter_no_change[1] == 5:
+            rain_effect(schedules_collection, specimen_num, teachers, auditoriums, groups, change_num=10, max_attempts=200)
             num_iter_no_change = (None, 0)
-            half = len(sorted_items) // 2
-            sorted_items = sorted_items[:half]
-            schedules_collection = schedules_collection[:half]
-            for i in range(half_size//2):
-                schedule = Schedule()
-                schedule.generate_schedule(
-                    groups=groups, teachers=teachers, auditoriums=auditoriums, week_quantity=week_quantity
-                )
-                fitness_score = fitness_soft(schedule, groups, teachers, auditoriums, week_quantity, False)
-                schedules_collection.append((schedule, fitness_score))
-                sorted_items.append((schedule, fitness_score))
 
         print()
         print(f"Best of iter {i}: ")
         for fi in range(0, len(sorted_items)):
             print(sorted_items[fi][1])
 
-        for j in range(half_size):
+        for j in range(specimen_num - len(sorted_items)):
             random_parent1 = random.randint(0, half_size - 1)
             random_parent2 = random.randint(0, half_size - 1)
             while random_parent1 == random_parent2:
